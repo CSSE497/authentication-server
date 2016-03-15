@@ -20,7 +20,7 @@ const credentials = {
 
 var googleKey = null;
 
-passport.seriealizeUser(function(user, done){
+passport.serializeUser(function(user, done){
 	done(null, user);
 });
 
@@ -46,7 +46,7 @@ server.use(session({
 	saveUninitialized: false,
 	resave: false,
 	cookie: { secure: true },
-	secret: config.sessionSecret
+	secret: config.session.secret
 }));
 
 server.use(bodyParser.json({limit:'50mb'}));
