@@ -1,0 +1,11 @@
+{
+  "name": "authentication-server",
+  "version": "0.0.0",
+  "description": "Authentication server for pathfinder",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
