@@ -2,17 +2,31 @@ const express = require('express');
 const https = require('https');
 const bodyParser = require('body-parser');
 const passport = require('passport');
-const session = require('passport-session');
+const session = require('express-session');
 const GoogleStrategy = require('passport-google-oauth2').Strategy;
 const promise = require('bluebird');
 const pg = require('pg-promise')(
 	{ promiseLib: promise }
 );
+const fs = require('fs');
 const config = require('./config.json');
 const jwt = require('jsonwebtoken');
 const url = require('url');
 const database = pg(config.database);
+const credentials = {
+	key: fs.readFileSync(config.ssl.key).toString(),
+	cert: fs.readFileSync(config.ssl.certificate).toString()
+};
+
 var googleKey = null;
+
+passport.seriealizeUser(function(user, done){
+	done(null, user);
+});
+
+passport.deserializeUser(function(obj, done){
+	done(null, obj);
+});
 
 passport.use(new GoogleStrategy({
 		clientID: config.google.clientId,
@@ -28,6 +42,12 @@ passport.use(new GoogleStrategy({
 server = express();
 
 server.use(passport.initialize());
+server.use(session({
+	saveUninitialized: false,
+	resave: false,
+	cookie: { secure: true },
+	secret: config.sessionSecret
+}));
 
 server.use(bodyParser.json({limit:'50mb'}));
 server.use(bodyParser.urlencoded());
@@ -117,6 +137,6 @@ server.post('/',function(req,res){
 
 getGooglePublicKey(function(key){
 	googleKey = key;
-	server.listen(config.server.port);
+	https.createServer(credentials, server).listen(config.server.port);
 });
 
