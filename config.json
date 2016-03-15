@@ -1,0 +1,21 @@
+{
+	"database":{
+		"host":"162.222.177.187",
+		"port":5432,
+		"database":"pathfinderdb",
+		"user":"",
+		"password":""
+	},
+	"server":{
+		"port":3000,
+		"url":"//localhost:3000"
+	},
+	"google":{
+		"clientId":"",
+		"secret":""
+	},
+	"ssl":{
+		"key":"sslcert/server.key",
+		"certificate":"sslcert/server.crt"
+	}
+}
