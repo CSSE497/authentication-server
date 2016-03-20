@@ -236,6 +236,10 @@ getOpenIdConfig(function(googleConfig){
 	);
 
 	server.get('/connection', function(req, res, next){
+		if(config.apiServer.address && req.connection.remoteAddress !== config.apiServer.address){
+			res.sendStatus(401);
+			return;
+		}
 		var connectionId = req.query.connection_id;
 		if(!connectionId){
 			res.send(400, 'connection_id parameter not set');
