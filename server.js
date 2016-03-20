@@ -66,13 +66,16 @@ function checkKey(jwk, header){
 	return jwk.alg === header.alg && jwk.use === 'sig';
 }
 
-function verifyIdToken(jwks){
+function verifyIdToken(jwks, options){
 	return function(req, res, next){
 		var rawToken = req.openid.rawToken;
 		if(!rawToken){
 			res.sendStatus(500);
 			next(Error('id token missing'));
 			return;
+		}
+		if(!options){
+			options = jwtOptions;
 		}
 		console.log(rawToken);
 		var decoded = jwt.decode(rawToken, { complete: true });
@@ -86,7 +89,7 @@ function verifyIdToken(jwks){
 			var key = jwkToPem(jwk);
 			console.log(key);
 			try {
-				jwt.verify(rawToken, key, jwtOptions)
+				jwt.verify(rawToken, key, options)
 			} catch(err) {
 				continue;
 			}
@@ -96,7 +99,7 @@ function verifyIdToken(jwks){
 			next();
 			return;
 		}
-		res.send(500,'unable to authenticate user');
+		res.send(400,'unable to verify token');
 		next(new jwt.JsonWebTokenError('invalid signature'));
 	}
 }
@@ -248,43 +251,89 @@ getOpenIdConfig(function(googleConfig){
 	});
 
 	server.post('/connection', function(req, res, next){ // extract and authenticate token
-		var rawToken = req.query.token;
-		var token = jwt.decode(rawToken);
-		if(token.aud !== 'https://auth.pathfinder.xyz'){
-			res.send(401, 'token requires aud = "https://auth.pathfinder.xyz"');
-			return;
-		}
-		database.one('select name, key from application where id = $1',[token.iss])
-			.then(function(key){
-				try {
-					jwt.verify(rawToken, key, {algorithms: ["RS256"]});
-				} catch(e){
+		if(req.query.token){
+			var rawToken = req.query.token;
+			var token = jwt.decode(rawToken);
+			if(token.aud !== 'https://auth.pathfinder.xyz'){
+				res.send(401, 'token requires aud = "https://auth.pathfinder.xyz"');
+				return;
+			}
+			
+			database.one('select name, key from application where id = $1',[token.iss])
+				.then(function(key){
+					try {
+						jwt.verify(rawToken, key, {algorithms: ["RS256"]});
+					} catch(e){
+						next(e);
+						res.send(401, e.message)
+						return;
+					}
+					if(token.expires < Date.now() / 1000){
+						next(jwt.JsonWebTokenError('Token Expired'));
+						res.send(401, 'token expired');
+						return;
+					}
+					req.pathfinder = {
+						sub:token.sub,
+						email:token.email,
+						exp:token.exp,
+						aud:'https://api.thepathfinder.xyz',
+						appId:token.iss,
+						iss:'https://auth.thepathfinder.xyz'
+					};
+					next();
+				})
+				.catch(function(e){
 					next(e);
-					res.send(401, e.message)
-					return;
-				}
-				if(token.expires < Date.now() / 1000){
-					next(jwt.JsonWebTokenError('Token Expired'));
-					res.send(401, 'token expired');
-					return;
-				}
-				req.pathfinder = {
-					sub:token.sub,
-					email:token.email,
-					exp:token.exp,
-					aud:'https://api.thepathfinder.xyz'
-				};
-				next();
-			})
-			.catch(function(e){
-				next(e);
-				res.sendStatus(500);
-			});
+					res.sendStatus(500);
+				});
+		} else if(req.query.id_token){
+			var token = jwt.decode(req.query.id_token);
+			var appId = req.query.application_id;
+			var conectionId = req.query.connection_id;
+			var email = req.query.email;
+			if(!appId){
+				res.send(400, 'application_id required');
+				return;
+			}
+			if(!connection_id){
+				res.send(400, 'connection_id required');
+				return;
+			}
+			if(!email){
+				res.send(400, 'email required');
+			}
+			if(token.iss === googleConfig.issuer){
+				var connection = req.query.connection
+				req.openId.rawToken = rawToken;
+				var options = {algorithms: jwtOptions.algorithms};
+				verifyIdToken(googleConfig.jwks.keys,options)(req,res,function(err){
+					if(err){
+						next(err);
+						return;
+					}
+					if(token.email !== email){
+						res.send(400, 'id token does not match');
+						return;
+					}
+					req.pathfinder = {
+						sub:connectionId,
+						email:email,
+						exp:token.exp,
+						aud:'https://api.thepathfinder.xyz',
+						appId:appId,
+						iss:'https://auth.thepathfinder.xyz'
+					}
+					next()
+				});
+			}
+		}
+
 	}, function(req, res, next){ // get permissions
 		var pf = res.pathfinder;
 		var email = pf.email;
-		var applicationId = pf.app_id
-		database.one('select permissions from permissions where email=$1 and application_id=$2;',[email, applicationId])
+		var applicationId = pf.appId
+		database.one('select permissions from permissions where email=$1 and application_id=$2;',[email, appId])
 			.then(function(permissions){
 				res.pathfinder.permissions = JSON.parse(permissions);
 			})
