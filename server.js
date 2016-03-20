@@ -91,7 +91,17 @@ function verifyIdToken(jwks, options){
 			try {
 				jwt.verify(rawToken, key, options)
 			} catch(err) {
-				continue;
+				if(err instanceof jwt.TokenExpiredError){
+					res.send(400, 'token expired');
+					return;
+				}
+				if(err instanceof jwt.JsonWebTokenError){
+					console.log(err);
+					continue;
+				} else {
+					res.send(400, err.message);
+					return;
+				}
 			}
 			console.log('VERIFIED');
 			console.log(token);
@@ -100,7 +110,7 @@ function verifyIdToken(jwks, options){
 			return;
 		}
 		res.send(400,'unable to verify token');
-		next(new jwt.JsonWebTokenError('invalid signature'));
+		next(new jwt.JsonWebTokenError('failed to verify token'));
 	}
 }
 
@@ -127,13 +137,18 @@ getOpenIdConfig(function(googleConfig){
 
 	server.get('/auth/google',
 		function(req, res, next){
-			if(!req.query.return_url){
+			req.session.return_token = req.query.return_token;
+			req.session.url_encode = req.query.url_encode;
+			if(!(req.session.return_token || req.query.return_url)){
 				res.status(400).send('no return url specified');
 				return;
 			}
 			if(!req.query.application){
 				res.status(400).send('no application specified');
 				return;
+			}
+			if(!req.query.return_token){
+				req.session.return_token
 			}
 			req.session.return_url = req.query.return_url;
 			req.session.application = req.query.application;
@@ -225,13 +240,24 @@ getOpenIdConfig(function(googleConfig){
 			var email = token.email;
 			var appId = req.session.application;
 			database.none('insert into permission (email, application_id, permission) values ($1, $2, $3);',[email, appId, '[]'])
-				.then(function(){
-					res.redirect(req.session.url);
-				}).catch(function(e){
-					console.log(e);
-					res.sendStatus(500);
-					next(e);
+				.then(next).catch(function(e){
+					if(e.toString().indexOf('error: duplicate key value violates unique constraint') !== -1) { // this is a generic Error so we need to check the message
+						next()
+					} else {
+						res.sendStatus(500);
+						next(e);
+					}
 				});
+		}, function(req, res, next){
+			if(req.session.return_token){
+				if(req.session.url_encode){
+					res.send(encodeURIComponent(req.openid.rawToken));
+				} else {
+					res.send(req.openid.rawToken);
+				}
+			} else {
+				res.redirect(req.session.url);
+			}
 		}
 	);
 
@@ -280,7 +306,6 @@ getOpenIdConfig(function(googleConfig){
 					req.pathfinder = {
 						sub:token.sub,
 						email:token.email,
-						exp:token.exp,
 						aud:'https://api.thepathfinder.xyz',
 						appId:token.iss,
 						iss:'https://auth.thepathfinder.xyz'
@@ -294,13 +319,13 @@ getOpenIdConfig(function(googleConfig){
 		} else if(req.query.id_token){
 			var token = jwt.decode(req.query.id_token);
 			var appId = req.query.application_id;
-			var conectionId = req.query.connection_id;
+			var connectionId = req.query.connection_id;
 			var email = req.query.email;
 			if(!appId){
 				res.send(400, 'application_id required');
 				return;
 			}
-			if(!connection_id){
+			if(!connectionId){
 				res.send(400, 'connection_id required');
 				return;
 			}
@@ -309,7 +334,9 @@ getOpenIdConfig(function(googleConfig){
 			}
 			if(token.iss === googleConfig.issuer){
 				var connection = req.query.connection
-				req.openId.rawToken = rawToken;
+				req.openid = {
+					rawToken: req.query.id_token
+				};
 				var options = {algorithms: jwtOptions.algorithms};
 				verifyIdToken(googleConfig.jwks.keys,options)(req,res,function(err){
 					if(err){
@@ -323,7 +350,6 @@ getOpenIdConfig(function(googleConfig){
 					req.pathfinder = {
 						sub:connectionId,
 						email:email,
-						exp:token.exp,
 						aud:'https://api.thepathfinder.xyz',
 						appId:appId,
 						iss:'https://auth.thepathfinder.xyz'
@@ -334,35 +360,54 @@ getOpenIdConfig(function(googleConfig){
 		}
 
 	}, function(req, res, next){ // get permissions
-		var pf = res.pathfinder;
+		var pf = req.pathfinder;
 		var email = pf.email;
-		var applicationId = pf.appId
-		database.one('select permissions from permissions where email=$1 and application_id=$2;',[email, appId])
-			.then(function(permissions){
-				res.pathfinder.permissions = JSON.parse(permissions);
+		var appId = pf.appId
+		database.one('select permissions from permission where email=$1 and application_id=$2;',[email, appId])
+			.then(function(data){
+				req.pathfinder.permissions = data.permissions;
+				next();
 			})
 			.catch(function(e){
-				res.send(404, 'user not found');
-				next(e);
+				if(e instanceof pg.QueryResultError){
+					res.send(404, 'user not found');
+				} else {
+					next(e);
+				}
 			});
 	}, function(req, res, next){ // assemble and save token
-		var tokenObj = res.pathfinder;
-		tokenObj.issuer = 'https://auth.pathfinder.xyz';
+		var token = req.pathfinder;
+		var tokenStr;
 		try {
-			var token = jwt.sign(token, rsa.private, config.jwtCreation);
-			database.none('insert into connection (id, token) values ($1, $2);',[req.query.connectionId, token])
-				.then(function(){
-					res.sendStatus(200);
-				})
-				.catch(function(e){
-					next(e);
-					res.sendStatus(500);
-				});
-
+			console.log(config.jwtCreation);
+			tokenStr = jwt.sign(token, rsa.private, config.jwtCreation);
 		} catch(e){
 			next(e);
 			res.send(500, 'Internal Server Error');
+			return;
 		}	
+
+		database.none(
+			'insert into connection (id, token) values ($1, $2);',
+			[token.sub, tokenStr]
+		).then(function(){
+			res.sendStatus(201);
+		}).catch(function(e){
+			if(e.toString().indexOf('error: duplicate key value violates unique constraint') !== -1) { // this is a generic Error so we need to check the message
+				database.none(
+					'update connection set token=$2 where id=$1;',
+					[token.sub, tokenStr]
+				).then(function(){
+					res.sendStatus(200);
+				}).catch(function(e){
+					next(e);
+					res.sendStatus(500);
+				});
+			} else {
+				next(e);
+				res.sendStatus(500);
+			}
+		});
 	});
 
 	server.get('/certificate', function(req, res){
