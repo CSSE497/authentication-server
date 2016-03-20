@@ -7,12 +7,14 @@
 		"password":""
 	},
 	"server":{
-		"port":3000,
-		"url":"https://localhost:3000"
+		"port":8000,
+		"securePort":3000,
+		"host":"localhost"
 	},
 	"google":{
 		"clientId":"",
-		"secret":""
+		"secret":"",
+		"openId":"https://accounts.google.com/.well-known/openid-configuration"
 	},
 	"ssl":{
 		"key":"sslcert/server.key",
@@ -20,5 +22,14 @@
 	},
 	"session":{
 		"secret":""
+	},
+	"jwtCreation":{
+		"algorithm":"RS256",
+		"expiresIn":300,
+		"key":{
+			"private":"rsacert/key.pem",
+			"public":"rsacert/key.pub"
+		}
 	}
 }
+

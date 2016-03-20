@@ -29,6 +29,8 @@ const rsa = {
 	public: fs.readFileSync(config.jwtCreation.key.public)
 };
 
+Error.stackTraceLimit = Infinity;
+
 function httpsGet(url, done){
 	https.get(url, function(res){
 		var body = '';
@@ -106,7 +108,7 @@ getOpenIdConfig(function(googleConfig){
 	const redirect_uri = url.format({
 		protocol: 'https',
 		hostname: config.server.host,
-		port: config.server.port,
+		port: config.server.securePort,
 		pathname: '/auth/google/return'
 	});
 
@@ -141,12 +143,12 @@ getOpenIdConfig(function(googleConfig){
 				.catch(function(error){
 					switch(error.name){
 						case 'QueryResultError':
-							res.status(404).send(
+							res.send(404,
 								'no application with id: ' + req.query.application
 							);
 							break;
 						default:
-							res.status(500).send('Internal Server Error');
+							res.statusStatus(500);
 							next(error);
 							break;
 					}
@@ -217,15 +219,16 @@ getOpenIdConfig(function(googleConfig){
 			post.end(body);
 		},
 		verifyIdToken(googleConfig.jwks.keys),
-		function(req, res){
+		function(req, res, next){
 			var token = req.openid.token;
 			var email = token.email;
-			var appId = req.session.application_id;
-			database.none('insert into permission (email, application_id, permission) values ($1, $2, $3) on conflict do nothing',[email, appId, '[]'])
+			var appId = req.session.application;
+			database.none('insert into permission (email, application_id, permission) values ($1, $2, $3);',[email, appId, '[]'])
 				.then(function(){
 					res.redirect(req.session.url);
 				}).catch(function(e){
-					res.send(500);
+					console.log(e);
+					res.sendStatus(500);
 					next(e);
 				});
 		}
@@ -320,7 +323,9 @@ getOpenIdConfig(function(googleConfig){
 
 	});
 
-	https.createServer(credentials, server).listen(config.server.port);
-	
+	https.createServer(credentials, server).listen(config.server.securePort);
+	http.createServer(function(req, res){
+		res.redirect(301, 'https://'+req.host+req.url);
+	}).listen(config.server.port);
 });
 
