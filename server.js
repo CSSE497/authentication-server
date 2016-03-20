@@ -18,8 +18,6 @@ const credentials = {
 	key: fs.readFileSync(config.ssl.key).toString(),
 	cert: fs.readFileSync(config.ssl.certificate).toString()
 };
-const crypto = require('crypto');
-const util = require('util');
 const jwtOptions = {
 	audience: config.google.clientId,
 	algorithms: ["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
@@ -256,7 +254,7 @@ getOpenIdConfig(function(googleConfig){
 			res.send(401, 'token requires aud = "https://auth.pathfinder.xyz"');
 			return;
 		}
-		database.one('select name, key from application where id = $1',[token.application_id])
+		database.one('select name, key from application where id = $1',[token.iss])
 			.then(function(key){
 				try {
 					jwt.verify(rawToken, key, {algorithms: ["RS256"]});
@@ -271,9 +269,10 @@ getOpenIdConfig(function(googleConfig){
 					return;
 				}
 				req.pathfinder = {
-					cId: token.connectionId,
-					email: token.email,
-					exp: token.expires
+					sub:token.sub,
+					email:token.email,
+					exp:token.exp,
+					aud:'https://api.thepathfinder.xyz'
 				};
 				next();
 			})
