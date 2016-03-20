@@ -1,5 +1,6 @@
 const express = require('express');
 const https = require('https');
+const http = require('http');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 const promise = require('bluebird');
@@ -19,12 +20,14 @@ const credentials = {
 };
 const crypto = require('crypto');
 const util = require('util');
-const ursa = require('ursa');
 const jwtOptions = {
 	audience: config.google.clientId,
 	algorithms: ["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
 };
-Object.assign = require('object-assign');
+const rsa = {
+	private: fs.readFileSync(config.jwtCreation.key.private),
+	public: fs.readFileSync(config.jwtCreation.key.public)
+};
 
 function httpsGet(url, done){
 	https.get(url, function(res){
@@ -228,67 +231,96 @@ getOpenIdConfig(function(googleConfig){
 		}
 	);
 
-	server.post('/token/:token', function(req, res, next){
-		var token = req.params.token || req.body.token;
-		if(!token){
-			res.send(400,'no auth token sent');
-			return;
+	server.get('/connection', function(req, res, next){
+		var connectionId = req.query.connection_id;
+		if(!connectionId){
+			res.send(400, 'connection_id parameter not set');
 		}
-
-		var decoded = jwt.decode(token, {complete: true});
-		var payload = decoded.payload;
-		var header = payload.header;
-		if(header.alg == 'none'){
-			res.send(401,'algorithm required');
-			return;
-		}
-		for(field in ['exp','application_id','id']){
-			if(payload[field] === undefined || payload[field] === null){
-				res.send(400, 'auth token missing required field: ' + field);
-				return;
-			}
-		}
-		if(payload.nonce){
-			if(payload.nonce !== req.body.nonce){
-				res.send(401,'nonce mismatch');
-				return;
-			}
-		}
-		if(payload.exp < Math.floor(new Date() / 1000)){
-			res.send(401,'auth token expired');
-			return;	
-		}
-		database.one('select secret from application where application_id = $1',[application_id])
-			.then(function(secret){
-				jwt.verify(token, secret, function(err, data){
-					if(err) {
-						res.send(401,'id token expired');
-					} else {
-						req.token = data;
-						next();
-					}
-				});
+		database.one('delete from connection where id = $1 returning token;',[connectionId])
+			.then(function(token){
+				res.send(token);
 			})
-			.catch(function(err){
-				res.send(404, 'application: ' + application_id + ' not found');
+			.catch(function(e){
+				next(e);
+				res.sendStatus(500);
 			});
-	}, function(req, res){
-		var issuer = req.token.id_iss;
-		var idToken = req.token.id;
-		var permissions = req.token.permissions || [];
-		var application_id = req.body.application_id;
-		handleIdToken(req.token, req.token.refresh, function(err){
-			if(err){
-				res.send(400, err.message);
-			}
-		});
+	});
+
+	server.post('/connection', function(req, res, next){ // extract and authenticate token
+		var rawToken = req.query.token;
+		var token = jwt.decode(rawToken);
+		if(token.aud !== 'https://auth.pathfinder.xyz'){
+			res.send(401, 'token requires aud = "https://auth.pathfinder.xyz"');
+			return;
+		}
+		database.one('select name, key from application where id = $1',[token.application_id])
+			.then(function(key){
+				try {
+					jwt.verify(rawToken, key, {algorithms: ["RS256"]});
+				} catch(e){
+					next(e);
+					res.send(401, e.message)
+					return;
+				}
+				if(token.expires < Date.now() / 1000){
+					next(jwt.JsonWebTokenError('Token Expired'));
+					res.send(401, 'token expired');
+					return;
+				}
+				req.pathfinder = {
+					cId: token.connectionId,
+					email: token.email,
+					exp: token.expires
+				};
+				next();
+			})
+			.catch(function(e){
+				next(e);
+				res.sendStatus(500);
+			});
+	}, function(req, res, next){ // get permissions
+		var pf = res.pathfinder;
+		var email = pf.email;
+		var applicationId = pf.app_id
+		database.one('select permissions from permissions where email=$1 and application_id=$2;',[email, applicationId])
+			.then(function(permissions){
+				res.pathfinder.permissions = JSON.parse(permissions);
+			})
+			.catch(function(e){
+				res.send(404, 'user not found');
+				next(e);
+			});
+	}, function(req, res, next){ // assemble and save token
+		var tokenObj = res.pathfinder;
+		tokenObj.issuer = 'https://auth.pathfinder.xyz';
+		try {
+			var token = jwt.sign(token, rsa.private, config.jwtCreation);
+			database.none('insert into connection (id, token) values ($1, $2);',[req.query.connectionId, token])
+				.then(function(){
+					res.sendStatus(200);
+				})
+				.catch(function(e){
+					next(e);
+					res.sendStatus(500);
+				});
+
+		} catch(e){
+			next(e);
+			res.send(500, 'Internal Server Error');
+		}	
+	});
+
+	server.get('/certificate', function(req, res){
+		res.set('Content-Type','text/plain');
+		res.send(rsa.public);
 	});
 
 	server.get('/:stuff',function(req,res){
-		res.send('hello world: ' + req.params.stuff);
+		res.sendStatus(404);
 
 	});
 
 	https.createServer(credentials, server).listen(config.server.port);
+	
 });
 
