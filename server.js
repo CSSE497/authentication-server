@@ -322,7 +322,7 @@ getOpenIdConfig(function(googleConfig){
 			var token = jwt.decode(req.query.id_token);
 			var appId = req.query.application_id;
 			var connectionId = req.query.connection_id;
-			var email = req.query.email;
+			var email = token.email;
 			if(!appId){
 				res.send(400, 'application_id required');
 				return;
@@ -330,9 +330,6 @@ getOpenIdConfig(function(googleConfig){
 			if(!connectionId){
 				res.send(400, 'connection_id required');
 				return;
-			}
-			if(!email){
-				res.send(400, 'email required');
 			}
 			if(token.iss === googleConfig.issuer){
 				var connection = req.query.connection
@@ -343,10 +340,6 @@ getOpenIdConfig(function(googleConfig){
 				verifyIdToken(googleConfig.jwks.keys,options)(req,res,function(err){
 					if(err){
 						next(err);
-						return;
-					}
-					if(token.email !== email){
-						res.send(400, 'id token does not match');
 						return;
 					}
 					req.pathfinder = {
