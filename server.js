@@ -119,7 +119,6 @@ getOpenIdConfig(function(googleConfig){
 	const redirect_uri = url.format({
 		protocol: 'https',
 		hostname: config.server.host,
-		port: config.server.securePort,
 		pathname: '/auth/google/return'
 	});
 
@@ -239,7 +238,7 @@ getOpenIdConfig(function(googleConfig){
 			var token = req.openid.token;
 			var email = token.email;
 			var appId = req.session.application;
-			database.none('insert into permission (email, application_id, permission) values ($1, $2, $3);',[email, appId, '[]'])
+			database.none('insert into permission (email, application_id, permissions) values ($1, $2, $3);',[email, appId, '[]'])
 				.then(next).catch(function(e){
 					if(e.toString().indexOf('error: duplicate key value violates unique constraint') !== -1) { // this is a generic Error so we need to check the message
 						next()
@@ -271,8 +270,11 @@ getOpenIdConfig(function(googleConfig){
 			res.send(400, 'connection_id parameter not set');
 		}
 		database.one('delete from connection where id = $1 returning token;',[connectionId])
-			.then(function(token){
-				res.send(token);
+			.then(function(data){
+				var jwt = new Buffer(data.token).toString('utf8'); 
+				console.log('sending jwt');
+				console.log(jwt);
+				res.send(jwt);
 			})
 			.catch(function(e){
 				next(e);
@@ -284,8 +286,8 @@ getOpenIdConfig(function(googleConfig){
 		if(req.query.token){
 			var rawToken = req.query.token;
 			var token = jwt.decode(rawToken);
-			if(token.aud !== 'https://auth.pathfinder.xyz'){
-				res.send(401, 'token requires aud = "https://auth.pathfinder.xyz"');
+			if(token.aud !== 'https://auth.thepathfinder.xyz'){
+				res.send(401, 'token requires aud = "https://auth.thepathfinder.xyz"');
 				return;
 			}
 			
@@ -379,7 +381,6 @@ getOpenIdConfig(function(googleConfig){
 		var token = req.pathfinder;
 		var tokenStr;
 		try {
-			console.log(config.jwtCreation);
 			tokenStr = jwt.sign(token, rsa.private, config.jwtCreation);
 		} catch(e){
 			next(e);
@@ -421,8 +422,10 @@ getOpenIdConfig(function(googleConfig){
 	});
 
 	https.createServer(credentials, server).listen(config.server.securePort);
-	http.createServer(function(req, res){
+	var httpServer = express();
+	httpServer.get('*',function(req, res){
 		res.redirect(301, 'https://'+req.host+req.url);
-	}).listen(config.server.port);
+	});
+	http.createServer(httpServer).listen(config.server.port);
 });
 

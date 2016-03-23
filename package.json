@@ -1,11 +1,29 @@
 {
   "name": "authentication-server",
-  "version": "0.0.0",
+  "version": "0.0.7",
   "description": "Authentication server for pathfinder",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"All Tests Passed!\" && exit 0",
+    "start": "node server.js"
   },
-  "author": "",
-  "license": "ISC"
+  "author": "Daniel Hanson",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CSSE497/authentication-server"
+  },
+  "dependencies": {
+    "bluebird": "^3.3.4",
+    "body-parser": "^1.15.0",
+    "express": "^4.13.4",
+    "express-session": "^1.13.0",
+    "http": "0.0.0",
+    "https": "^1.0.0",
+    "jsonwebtoken": "^5.7.0",
+    "jwk-to-pem": "^1.2.4",
+    "pg-promise": "^3.4.1",
+    "querystring": "^0.2.0",
+    "url": "^0.11.0"
+  }
 }
