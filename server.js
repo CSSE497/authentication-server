@@ -66,7 +66,7 @@ function checkKey(jwk, header){
 	return jwk.alg === header.alg && jwk.use === 'sig';
 }
 
-function verifyIdToken(jwks, options){
+function verifyIdToken(gConf, options){
 	return function(req, res, next){
 		var rawToken = req.openid.rawToken;
 		if(!rawToken){
@@ -81,38 +81,57 @@ function verifyIdToken(jwks, options){
 		var decoded = jwt.decode(rawToken, { complete: true });
 		var token = decoded.payload;
 		var header = decoded.header;
-		for(var i = 0; i < jwks.length; ++i){
-			var jwk = jwks[i];
-			if(!checkKey(jwk, header)){
-				continue;
-			}
-			var key = jwkToPem(jwk);
-			console.log(key);
-			try {
-				jwt.verify(rawToken, key, options)
-			} catch(err) {
-				if(err instanceof jwt.TokenExpiredError){
-					res.send(400, 'token expired');
-					console.log('token expired');
-					return;
-				}
-				if(err instanceof jwt.JsonWebTokenError){
-					console.log(err);
+		function verify(){
+			var jwks = gConf.jwks.keys;
+			for(var i = 0; i < jwks.length; ++i){
+				var jwk = jwks[i];
+				if(!checkKey(jwk, header)){
 					continue;
-				} else {
-					res.send(400, err.message);
-					next(err);
-					return;
 				}
+				var key = jwkToPem(jwk);
+				console.log(key);
+				try {
+					jwt.verify(rawToken, key, options)
+				} catch(err) {
+					if(err instanceof jwt.TokenExpiredError){
+						res.send(400, 'token expired');
+						console.log('token expired');
+						return true;
+					}
+					if(err instanceof jwt.JsonWebTokenError){
+						console.log(err);
+						continue;
+					} else {
+						res.send(400, err.message);
+						next(err);
+						return true;
+					}
+				}
+				console.log('VERIFIED');
+				console.log(token);
+				req.openid.token = token;
+				next();
+				return true;
 			}
-			console.log('VERIFIED');
-			console.log(token);
-			req.openid.token = token;
-			next();
+			return false;
+		}
+		if(verify()){
 			return;
 		}
-		res.send(400,'unable to verify token');
-		next(new jwt.JsonWebTokenError('failed to verify token'));
+		console.log('failed to verify signature, refreshing key');
+		httpsGet(gConf.jwks_uri, function(closed, jwks){
+			if(closed){
+				res.send(400,'failed to verify token');
+				next(new jwt.JsonWebTokenError('failed to refresh google key'));
+				return;
+			}
+			gConf.jwks = jwks;
+			if(verify()){
+				return;
+			}
+			res.send(400,'failed to verify token');
+			next(new jwt.JsonWebTokenError('failed to verify token'));
+		});
 	}
 }
 
@@ -176,7 +195,7 @@ getOpenIdConfig(function(googleConfig){
 						rawToken: req.query.id_token
 					};
 					var options = {algorithms: jwtOptions.algorithms};
-					verifyIdToken(googleConfig.jwks.keys,options)(req,res,function(err){
+					verifyIdToken(googleConfig, options)(req,res,function(err){
 						if(err){
 							next(err);
 							res.send(400, 'could not verify id token: '+ err.message);
@@ -368,7 +387,7 @@ getOpenIdConfig(function(googleConfig){
 			});
 			post.end(body);
 		},
-		verifyIdToken(googleConfig.jwks.keys),
+		verifyIdToken(googleConfig),
 		function(req, res, next){
 			var token = req.openid.token;
 			var email = token.email;
