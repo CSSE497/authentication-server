@@ -51,26 +51,35 @@ function getOpenIdConfig(done){
 			process.exit();
 		}
 		console.log(res);
-		httpsGet(res.jwks_uri, function(closed, jwks){
+		httpsGet('https://www.googleapis.com/identitytoolkit/v3/relyingparty/publicKeys', function(closed, idKeys){
 			if(closed){
-				console.warn('failed to get key');
-				process.exit();
+				console.warn('failed to get google openid key');
 			}
-			res.jwks = jwks;
-			done(res);
+			httpsGet(res.jwks_uri, function(closed, jwks){
+				if(closed){
+					console.warn('failed to get google openid key');
+					process.exit();
+				}
+				res.jwks = jwks;
+				Object.keys(idKeys).forEach(function(k){
+					jwks.keys.push(idKeys[k]);
+				});
+				console.log('KEYS: ' + JSON.stringify(res.jwks.keys));
+				done(res);
+			});
 		});
 	});
 }
 
 function checkKey(jwk, header){
-	return jwk.alg === header.alg && jwk.use === 'sig';
+	return true;
 }
 
 function verifyIdToken(jwks, options){
 	return function(req, res, next){
 		var rawToken = req.openid.rawToken;
 		if(!rawToken){
-			res.sendStatus(500);
+			res.send(400, 'missing id token');
 			next(Error('id token missing'));
 			return;
 		}
@@ -86,7 +95,7 @@ function verifyIdToken(jwks, options){
 			if(!checkKey(jwk, header)){
 				continue;
 			}
-			var key = jwkToPem(jwk);
+			var key = (typeof jwk === 'string') ? jwk : jwkToPem(jwk);
 			console.log(key);
 			try {
 				jwt.verify(rawToken, key, options)
@@ -170,7 +179,7 @@ getOpenIdConfig(function(googleConfig){
 					res.send(400, 'connection_id required');
 					return;
 				}
-				if(token.iss === googleConfig.issuer || token.iss === 'accounts.google.com'){
+				if(token.iss === googleConfig.issuer || token.iss === 'accounts.google.com' || true){
 					var connection = req.query.connection
 					req.openid = {
 						rawToken: req.query.id_token
@@ -193,10 +202,12 @@ getOpenIdConfig(function(googleConfig){
 						next()
 					});
 				} else {
-					res.send(400, 'invalid issuer for id token: ' + googleConfig.issuer);
+					res.send(400, 'invalid issuer for id token: ' + token.iss);
+					console.log('invalid issuer for id token: ' + token.iss);
 				}
 			} else {
 				res.send(400, 'No id token sent');
+				console.log('No id token sent');
 			}
 		}, function(req, res, next){ // get permissions
 			var pf = req.pathfinder;
@@ -210,8 +221,9 @@ getOpenIdConfig(function(googleConfig){
 				.catch(function(e){
 					if(e instanceof pg.QueryResultError){
 						res.send(404, 'user not found');
+						console.log('user not found:' + email);
 					} else {
-						res.sendStatus(500);
+						res.send(500,'Error reading database for permissions with email: ' + email);
 						next(e);
 					}
 				});
