@@ -36,10 +36,32 @@ function httpsGet(url, done){
 			body += chunk;
 		});
 		res.on('end', function(){
-			done(null, JSON.parse(body));
+			done(false, JSON.parse(body));
 		});
 		res.on('close',function(){
-			done(true);
+			done(new Error('Failed to load resource: ' + url));
+		});
+	});
+}
+
+function getKeys(gConf, done){
+	httpsGet('https://www.googleapis.com/identitytoolkit/v3/relyingparty/publicKeys', function(idError, idKeys){
+		if(idError){
+			console.warn('failed to get google openid key');
+			done(idError);
+			return;
+		}
+		httpsGet(res.jwks_uri, function(jwkError, jwks){
+			if(jwkError){
+				console.warn('failed to get google openid key');
+				done(jwlError);
+			}
+			res.jwks = jwks;
+			Object.keys(idKeys).forEach(function(k){
+				jwks.keys.push(idKeys[k]);
+			});
+			console.log('KEYS: ' + JSON.stringify(res.jwks.keys));
+			done(false, res);
 		});
 	});
 }
@@ -51,23 +73,7 @@ function getOpenIdConfig(done){
 			process.exit();
 		}
 		console.log(res);
-		httpsGet('https://www.googleapis.com/identitytoolkit/v3/relyingparty/publicKeys', function(closed, idKeys){
-			if(closed){
-				console.warn('failed to get google openid key');
-			}
-			httpsGet(res.jwks_uri, function(closed, jwks){
-				if(closed){
-					console.warn('failed to get google openid key');
-					process.exit();
-				}
-				res.jwks = jwks;
-				Object.keys(idKeys).forEach(function(k){
-					jwks.keys.push(idKeys[k]);
-				});
-				console.log('KEYS: ' + JSON.stringify(res.jwks.keys));
-				done(res);
-			});
-		});
+		getKeys(res, done);
 	});
 }
 
@@ -121,13 +127,12 @@ function verifyIdToken(gConf, options){
 			return;
 		}
 		console.log('failed to verify signature, refreshing keys');
-		httpsGet(gConf.jwks_uri, function(closed, jwks){
+		getKeys(gConf, function(closed){
 			if(closed){
 				res.send(400,'failed to verify token');
 				next(new jwt.JsonWebTokenError('failed to refresh google key'));
 				return;
 			}
-			gConf.jwks = jwks;
 			if(verify()){
 				return;
 			}
@@ -137,7 +142,10 @@ function verifyIdToken(gConf, options){
 	}
 }
 
-getOpenIdConfig(function(googleConfig){
+getOpenIdConfig(function(googleConfErr, googleConfig){
+	if(googleConfErr){
+		throw googleConfErr;
+	}
 
 	const connection = [
 		function(req, res, next){ // extract and authenticate token
