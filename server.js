@@ -36,10 +36,32 @@ function httpsGet(url, done){
 			body += chunk;
 		});
 		res.on('end', function(){
-			done(null, JSON.parse(body));
+			done(false, JSON.parse(body));
 		});
 		res.on('close',function(){
-			done(true);
+			done(new Error('Failed to load resource: ' + url));
+		});
+	});
+}
+
+function getKeys(gConf, done){
+	httpsGet('https://www.googleapis.com/identitytoolkit/v3/relyingparty/publicKeys', function(idError, idKeys){
+		if(idError){
+			console.warn('failed to get google openid key');
+			done(idError);
+			return;
+		}
+		httpsGet(gConf.jwks_uri, function(jwkError, jwks){
+			if(jwkError){
+				console.warn('failed to get google openid key');
+				done(jwlError);
+			}
+			gConf.jwks = jwks;
+			Object.keys(idKeys).forEach(function(k){
+				jwks.keys.push(idKeys[k]);
+			});
+			console.log('KEYS: ' + JSON.stringify(gConf.jwks.keys));
+			done(false, gConf);
 		});
 	});
 }
@@ -51,31 +73,11 @@ function getOpenIdConfig(done){
 			process.exit();
 		}
 		console.log(res);
-		httpsGet('https://www.googleapis.com/identitytoolkit/v3/relyingparty/publicKeys', function(closed, idKeys){
-			if(closed){
-				console.warn('failed to get google openid key');
-			}
-			httpsGet(res.jwks_uri, function(closed, jwks){
-				if(closed){
-					console.warn('failed to get google openid key');
-					process.exit();
-				}
-				res.jwks = jwks;
-				Object.keys(idKeys).forEach(function(k){
-					jwks.keys.push(idKeys[k]);
-				});
-				console.log('KEYS: ' + JSON.stringify(res.jwks.keys));
-				done(res);
-			});
-		});
+		getKeys(res, done);
 	});
 }
 
-function checkKey(jwk, header){
-	return true;
-}
-
-function verifyIdToken(jwks, options){
+function verifyIdToken(gConf, options){
 	return function(req, res, next){
 		var rawToken = req.openid.rawToken;
 		if(!rawToken){
@@ -90,42 +92,60 @@ function verifyIdToken(jwks, options){
 		var decoded = jwt.decode(rawToken, { complete: true });
 		var token = decoded.payload;
 		var header = decoded.header;
-		for(var i = 0; i < jwks.length; ++i){
-			var jwk = jwks[i];
-			if(!checkKey(jwk, header)){
-				continue;
-			}
-			var key = (typeof jwk === 'string') ? jwk : jwkToPem(jwk);
-			console.log(key);
-			try {
-				jwt.verify(rawToken, key, options)
-			} catch(err) {
-				if(err instanceof jwt.TokenExpiredError){
-					res.send(400, 'token expired');
-					console.log('token expired');
-					return;
+		function verify(){
+			var jwks = gConf.jwks.keys;
+			for(var i = 0; i < jwks.length; ++i){
+				var jwk = jwks[i];
+				var key = (typeof jwk === 'string') ? jwk : jwkToPem(jwk);
+				console.log(key);
+				try {
+					jwt.verify(rawToken, key, options)
+				} catch(err) {
+					if(err instanceof jwt.TokenExpiredError){
+						res.send(400, 'token expired');
+						console.log('token expired');
+						return true;
+					}
+					if(err instanceof jwt.JsonWebTokenError){
+						console.log(err);
+						continue;
+					} else {
+						res.send(400, err.message);
+						next(err);
+						return true;
+					}
 				}
-				if(err instanceof jwt.JsonWebTokenError){
-					console.log(err);
-					continue;
-				} else {
-					res.send(400, err.message);
-					next(err);
-					return;
-				}
+				console.log('VERIFIED');
+				console.log(token);
+				req.openid.token = token;
+				next();
+				return true;
 			}
-			console.log('VERIFIED');
-			console.log(token);
-			req.openid.token = token;
-			next();
+			return false;
+		}
+		if(verify()){
 			return;
 		}
-		res.send(400,'unable to verify token');
-		next(new jwt.JsonWebTokenError('failed to verify token'));
+		console.log('failed to verify signature, refreshing keys');
+		getKeys(gConf, function(closed){
+			if(closed){
+				res.send(400,'failed to verify token');
+				next(new jwt.JsonWebTokenError('failed to refresh google key'));
+				return;
+			}
+			if(verify()){
+				return;
+			}
+			res.send(400,'failed to verify token');
+			next(new jwt.JsonWebTokenError('failed to verify token'));
+		});
 	}
 }
 
-getOpenIdConfig(function(googleConfig){
+getOpenIdConfig(function(googleConfErr, googleConfig){
+	if(googleConfErr){
+		throw googleConfErr;
+	}
 
 	const connection = [
 		function(req, res, next){ // extract and authenticate token
@@ -185,7 +205,7 @@ getOpenIdConfig(function(googleConfig){
 						rawToken: req.query.id_token
 					};
 					var options = {algorithms: jwtOptions.algorithms};
-					verifyIdToken(googleConfig.jwks.keys,options)(req,res,function(err){
+					verifyIdToken(googleConfig, options)(req,res,function(err){
 						if(err){
 							next(err);
 							res.send(400, 'could not verify id token: '+ err.message);
@@ -377,7 +397,7 @@ getOpenIdConfig(function(googleConfig){
 			});
 			post.end(body);
 		},
-		verifyIdToken(googleConfig.jwks.keys),
+		verifyIdToken(googleConfig),
 		function(req, res, next){
 			var token = req.openid.token;
 			var email = token.email;
