@@ -289,32 +289,29 @@ getOpenIdConfig(function(googleConfig){
 				res.status(400).send('no return url specified');
 				return;
 			}
-			if(!req.query.application){
-				res.status(400).send('no application specified');
-				return;
-			}
-			if(!req.query.return_token){
-				req.session.return_token
-			}
 			req.session.return_url = req.query.return_url;
 			req.session.application = req.query.application;
-			database.one("select id from application where id = $1",[req.query.application])
-				.then(function(data){
-					next();
-				})
-				.catch(function(error){
-					switch(error.name){
-						case 'QueryResultError':
-							res.send(404,
-								'no application with id: ' + req.query.application
-							);
-							break;
-						default:
-							res.statusStatus(500);
-							next(error);
-							break;
-					}
-				});
+			if(req.query.application){
+				database.one("select id from application where id = $1",[req.query.application])
+					.then(function(data){
+						next();
+					})
+					.catch(function(error){
+						switch(error.name){
+							case 'QueryResultError':
+								res.send(404,
+									'no application with id: ' + req.query.application
+								);
+								break;
+							default:
+								res.statusStatus(500);
+								next(error);
+								break;
+						}
+					});
+			} else {
+				next();
+			}
 		},
 		function(req, res){
 			var authUrl = url.parse(googleConfig.authorization_endpoint);
@@ -385,15 +382,19 @@ getOpenIdConfig(function(googleConfig){
 			var token = req.openid.token;
 			var email = token.email;
 			var appId = req.session.application;
-			database.none('insert into permission (email, application_id, permissions) values ($1, $2, $3);',[email, appId, '[]'])
-				.then(next).catch(function(e){
-					if(e.toString().indexOf('error: duplicate key value violates unique constraint') !== -1) { // this is a generic Error so we need to check the message
-						next()
-					} else {
-						res.sendStatus(500);
-						next(e);
-					}
-				});
+			if(appId){
+				database.none('insert into permission (email, application_id, permissions) values ($1, $2, $3);',[email, appId, '{}'])
+					.then(next).catch(function(e){
+						if(e.toString().indexOf('error: duplicate key value violates unique constraint') !== -1) { // this is a generic Error so we need to check the message
+							next()
+						} else {
+							res.sendStatus(500);
+							next(e);
+						}
+					});
+			} else {
+				next();
+			}
 		}, function(req, res, next){
 			if(req.session.return_token){
 				if(req.session.url_encode){
