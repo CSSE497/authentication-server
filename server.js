@@ -51,17 +51,17 @@ function getKeys(gConf, done){
 			done(idError);
 			return;
 		}
-		httpsGet(res.jwks_uri, function(jwkError, jwks){
+		httpsGet(gConf.jwks_uri, function(jwkError, jwks){
 			if(jwkError){
 				console.warn('failed to get google openid key');
 				done(jwlError);
 			}
-			res.jwks = jwks;
+			gConf.jwks = jwks;
 			Object.keys(idKeys).forEach(function(k){
 				jwks.keys.push(idKeys[k]);
 			});
-			console.log('KEYS: ' + JSON.stringify(res.jwks.keys));
-			done(false, res);
+			console.log('KEYS: ' + JSON.stringify(gConf.jwks.keys));
+			done(false, gConf);
 		});
 	});
 }
