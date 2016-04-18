@@ -177,6 +177,7 @@ getOpenIdConfig(function(googleConfErr, googleConfig){
 							email:token.email,
 							aud:'https://api.thepathfinder.xyz',
 							appId:token.iss,
+							status:'Authenticated',
 							iss:'https://auth.thepathfinder.xyz'
 						};
 						next();
@@ -217,6 +218,7 @@ getOpenIdConfig(function(googleConfErr, googleConfig){
 							email:email,
 							aud:'https://api.thepathfinder.xyz',
 							appId:appId,
+							status:'Authenticated',
 							iss:'https://auth.thepathfinder.xyz'
 						};
 						next()
