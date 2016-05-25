@@ -14,10 +14,6 @@ const jwkToPem = require('jwk-to-pem');
 const url = require('url');
 const querystring = require('querystring');
 const database = pg(config.database);
-const credentials = {
-	key: fs.readFileSync(config.ssl.key).toString(),
-	cert: fs.readFileSync(config.ssl.certificate).toString()
-};
 const jwtOptions = {
 	audience: config.google.clientId,
 	algorithms: ["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
@@ -467,12 +463,6 @@ getOpenIdConfig(function(googleConfErr, googleConfig){
 
 	});
 
-	https.createServer(credentials, server).listen(config.server.securePort);
-	var httpServer = express();
-	httpServer.post('/connection', connection);
-	httpServer.get('*',function(req, res){
-		res.redirect(301, 'https://'+req.host+req.url);
-	});
-	http.createServer(httpServer).listen(config.server.port);
+	http.createServer(server).listen(config.server.port);
 });
 
